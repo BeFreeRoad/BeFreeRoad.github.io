@@ -1054,11 +1054,23 @@ layers.Eltwise = this.EltwiseLayer = (function() {
   }
 
   EltwiseLayer.prototype.inferShapes = function(bottoms, tops, node) {
-    var firstInputShape;
+    var firstInputShape, j, len, parent, ref, rfH, rfW;
     if ((tops != null ? tops[0] : void 0) == null) {
       return;
     }
     this.checkParameters(bottoms, tops);
+    rfH = 0;
+    rfW = 0;
+    ref = node.parents;
+    for (j = 0, len = ref.length; j < len; j++) {
+      parent = ref[j];
+      if (rfW < parent.rfShapes[0]) {
+        rfH = parent.rfShapes[0];
+        rfW = parent.rfShapes[1];
+      }
+    }
+    node.rfShapes.push(rfH);
+    node.rfShapes.push(rfW);
     firstInputShape = bottoms[0].shape;
     return tops[0].shape = firstInputShape.slice(0);
   };

@@ -360,6 +360,16 @@ class @EltwiseLayer
     inferShapes: (bottoms, tops, node) =>
         unless tops?[0]? then return
         @checkParameters bottoms, tops
+        # receptive field
+        rfH = 0
+        rfW = 0
+        for parent in node.parents
+            if rfW < parent.rfShapes[0]
+                rfH = parent.rfShapes[0]
+                rfW = parent.rfShapes[1]
+
+        node.rfShapes.push rfH
+        node.rfShapes.push rfW
         firstInputShape = bottoms[0].shape
         tops[0].shape = firstInputShape[..]
 
