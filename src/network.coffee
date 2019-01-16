@@ -8,6 +8,7 @@ class Node
         # node form a simple chain structure.
         @coalesce = []
 
+        @rfShapes = []
     hasChildren: =>
         @children.length > 0
 

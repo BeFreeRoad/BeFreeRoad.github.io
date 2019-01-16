@@ -1,4 +1,4 @@
-(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+(function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
 var AppController, Editor, Notify, Renderer,
   bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
   slice = [].slice;
@@ -441,19 +441,19 @@ generateLayers = function(descriptors, header) {
 };
 
 setNodeOutputShapesAttribute = function(node) {
-  var blob, i, len, ref, ref1, results, shapeText;
+  var blob, i, len, ref, ref1, shapeText;
   if (!((node != null ? (ref = node.tops) != null ? ref.length : void 0 : void 0) > 0)) {
     return;
   }
   node.attribs.blob_shapes = {};
   ref1 = node.tops;
-  results = [];
   for (i = 0, len = ref1.length; i < len; i++) {
     blob = ref1[i];
     shapeText = '[ ' + blob.shape.join(', ') + ' ]';
-    results.push(node.attribs.blob_shapes[blob.name] = shapeText);
+    node.attribs.blob_shapes[blob.name] = shapeText;
   }
-  return results;
+  node.attribs.RFSshapes = {};
+  return node.attribs.RFSshapes["RF"] = '[ ' + node.rfShapes.join(', ') + ' ]';
 };
 
 computePrecedingShapes = function(node) {
@@ -590,11 +590,15 @@ layers = {};
 layers.Uniform = this.UniformLayer = (function() {
   function UniformLayer() {}
 
-  UniformLayer.prototype.inferShapes = function(bottoms, tops) {
-    var i, j, ref, results;
+  UniformLayer.prototype.inferShapes = function(bottoms, tops, node) {
+    var i, j, ref, results, rfH, rfW;
     if ((tops != null ? tops[0] : void 0) == null) {
       return;
     }
+    rfH = node.parents[0].rfShapes[0];
+    rfW = node.parents[0].rfShapes[1];
+    node.rfShapes.push(rfH);
+    node.rfShapes.push(rfW);
     results = [];
     for (i = j = 0, ref = tops.length; 0 <= ref ? j < ref : j > ref; i = 0 <= ref ? ++j : --j) {
       results.push(tops[i].shape = bottoms[i].shape.slice(0));
@@ -609,7 +613,12 @@ layers.Uniform = this.UniformLayer = (function() {
 layers.Loss = this.LossLayer = (function() {
   function LossLayer() {}
 
-  LossLayer.prototype.inferShapes = function(bottoms, tops) {
+  LossLayer.prototype.inferShapes = function(bottoms, tops, node) {
+    var rfH, rfW;
+    rfH = node.parents[0].rfShapes[0];
+    rfW = node.parents[0].rfShapes[1];
+    node.rfShapes.push(rfH);
+    node.rfShapes.push(rfW);
     if ((tops != null ? tops[0] : void 0) == null) {
       return;
     }
@@ -632,10 +641,12 @@ layers.Data = this.DataLayer = (function() {
     this.outputShape = this.tryExtractShapes(attribs);
   }
 
-  DataLayer.prototype.inferShapes = function(bottoms, tops) {
+  DataLayer.prototype.inferShapes = function(bottoms, tops, node) {
     if ((tops != null ? tops[0] : void 0) == null) {
       return;
     }
+    node.rfShapes.push(1);
+    node.rfShapes.push(1);
     this.checkParameters(bottoms, tops);
     tops[0].shape = this.outputShape.slice(0);
     if (tops[1]) {
@@ -722,12 +733,21 @@ ConvolutionLayerBase = (function() {
     this.axis = getValueOrDefault(params.axis, 1);
   }
 
-  ConvolutionLayerBase.prototype.inferShapes = function(bottoms, tops) {
-    var i, j, ref, results;
+  ConvolutionLayerBase.prototype.inferShapes = function(bottoms, tops, node) {
+    var i, inputShape, j, kernel, ref, results, rfH, rfW, stride, sucDimLength, succeedingDimensions;
     if ((tops != null ? tops[0] : void 0) == null) {
       return;
     }
     this.checkParameters(bottoms, tops);
+    inputShape = bottoms[0].shape;
+    succeedingDimensions = inputShape.slice(this.axis + 1);
+    sucDimLength = succeedingDimensions.length;
+    kernel = getParameterAsArray(this.kernel, sucDimLength, 'kernel');
+    stride = getParameterAsArray(this.stride, sucDimLength, 'stride');
+    rfH = (node.parents[0].rfShapes[0] - 1) * stride[0] + kernel[0];
+    rfW = (node.parents[0].rfShapes[1] - 1) * stride[1] + kernel[1];
+    node.rfShapes.push(rfH);
+    node.rfShapes.push(rfW);
     results = [];
     for (i = j = 0, ref = tops.length; 0 <= ref ? j < ref : j > ref; i = 0 <= ref ? ++j : --j) {
       results.push(this.inferShapesForOneBlob(bottoms[i], tops[i]));
@@ -840,8 +860,8 @@ layers.Pooling = this.PoolingLayer = (function() {
     this.isGlobalPooling = getValueOrDefault(params.global_pooling, false);
   }
 
-  PoolingLayer.prototype.inferShapes = function(bottoms, tops) {
-    var i, ii, inputShape, j, kernel, outDim, outDimRounded, outputShape, padding, ref, stride;
+  PoolingLayer.prototype.inferShapes = function(bottoms, tops, node) {
+    var i, ii, inputShape, j, kernel, outDim, outDimRounded, outputShape, padding, ref, rfH, rfW, stride;
     if ((tops != null ? tops[0] : void 0) == null) {
       return;
     }
@@ -851,6 +871,10 @@ layers.Pooling = this.PoolingLayer = (function() {
     padding = getParameterAsArray(this.padding, this.spatialDimSize, 'padding');
     stride = getParameterAsArray(this.stride, this.spatialDimSize, 'stride');
     kernel = this.getKernelSizes(inputShape);
+    rfH = (node.parents[0].rfShapes[0] - 1) * stride[0] + kernel[0];
+    rfW = (node.parents[0].rfShapes[1] - 1) * stride[1] + kernel[1];
+    node.rfShapes.push(rfH);
+    node.rfShapes.push(rfW);
     for (i = j = 0, ref = this.spatialDimSize; 0 <= ref ? j < ref : j > ref; i = 0 <= ref ? ++j : --j) {
       ii = inputShape.length - this.spatialDimSize + i;
       outDim = (inputShape[ii] + 2 * padding[i] - kernel[i]) / stride[i];
@@ -909,7 +933,7 @@ layers.InnerProduct = this.InnerProductLayer = (function() {
     this.axis = getValueOrDefault(params.axis, 1);
   }
 
-  InnerProductLayer.prototype.inferShapes = function(bottoms, tops) {
+  InnerProductLayer.prototype.inferShapes = function(bottoms, tops, node) {
     var inputShape, outputShape;
     if ((tops != null ? tops[0] : void 0) == null) {
       return;
@@ -951,17 +975,29 @@ layers.Concat = this.ConcatLayer = (function() {
     this.axis = getValueOrDefault(axis, 1);
   }
 
-  ConcatLayer.prototype.inferShapes = function(bottoms, tops) {
-    var bottom, firstInputShape, j, len, outputShape;
+  ConcatLayer.prototype.inferShapes = function(bottoms, tops, node) {
+    var bottom, firstInputShape, j, k, len, len1, outputShape, parent, ref, rfH, rfW;
     if ((tops != null ? tops[0] : void 0) == null) {
       return;
     }
     this.checkParameters(bottoms, tops);
+    rfH = 0;
+    rfW = 0;
+    ref = node.parents;
+    for (j = 0, len = ref.length; j < len; j++) {
+      parent = ref[j];
+      if (rfW < parent.rfShapes[0]) {
+        rfH = parent.rfShapes[0];
+        rfW = parent.rfShapes[1];
+      }
+    }
+    node.rfShapes.push(rfH);
+    node.rfShapes.push(rfW);
     firstInputShape = bottoms[0].shape;
     outputShape = firstInputShape.slice(0);
     outputShape[this.axis] = 0;
-    for (j = 0, len = bottoms.length; j < len; j++) {
-      bottom = bottoms[j];
+    for (k = 0, len1 = bottoms.length; k < len1; k++) {
+      bottom = bottoms[k];
       outputShape[this.axis] += bottom.shape[this.axis];
     }
     return tops[0].shape = outputShape;
@@ -1017,7 +1053,7 @@ layers.Eltwise = this.EltwiseLayer = (function() {
     this.inferShapes = bind(this.inferShapes, this);
   }
 
-  EltwiseLayer.prototype.inferShapes = function(bottoms, tops) {
+  EltwiseLayer.prototype.inferShapes = function(bottoms, tops, node) {
     var firstInputShape;
     if ((tops != null ? tops[0] : void 0) == null) {
       return;
@@ -1067,8 +1103,12 @@ layers.Crop = this.CropLayer = (function() {
     this.axis = getValueOrDefault(params != null ? params.axis : void 0, 0);
   }
 
-  CropLayer.prototype.inferShapes = function(bottoms, tops) {
-    var i, j, outputShape, ref, ref1;
+  CropLayer.prototype.inferShapes = function(bottoms, tops, node) {
+    var i, j, outputShape, ref, ref1, rfH, rfW;
+    rfH = node.parents[0].rfShapes[0];
+    rfW = node.parents[0].rfShapes[1];
+    node.rfShapes.push(rfH);
+    node.rfShapes.push(rfW);
     if ((tops != null ? tops[0] : void 0) == null) {
       return;
     }
@@ -1129,7 +1169,7 @@ exports.inferTopShapes = function(node) {
   try {
     LayerType = getLayerType(node.type);
     layer = new LayerType(node.attribs);
-    layer.inferShapes(node.bottoms, node.tops);
+    layer.inferShapes(node.bottoms, node.tops, node);
     return (function() {
       var j, len, ref, results;
       ref = node.tops;
@@ -2998,6 +3038,7 @@ Node = (function() {
     this.parents = [];
     this.children = [];
     this.coalesce = [];
+    this.rfShapes = [];
   }
 
   Node.prototype.hasChildren = function() {

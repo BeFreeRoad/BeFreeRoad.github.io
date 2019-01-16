@@ -53,16 +53,26 @@ shapesToString = (inputShapes) ->
 layers = {}
 layers.Uniform =
 class @UniformLayer
-    inferShapes: (bottoms, tops) ->
+    inferShapes: (bottoms, tops, node) ->
         unless tops?[0]? then return
         # Assume 'Uniform' layer doen't change the output shape
         # We interpret all currently unsupported layer as 'Uniform'
+        rfH = node.parents[0].rfShapes[0]
+        rfW = node.parents[0].rfShapes[1]
+
+        node.rfShapes.push rfH
+        node.rfShapes.push rfW
         for i in [0...tops.length]
             tops[i].shape = bottoms[i].shape[..]
 
 layers.Loss =
 class @LossLayer
-    inferShapes: (bottoms, tops) ->
+    inferShapes: (bottoms, tops, node) ->
+        rfH = node.parents[0].rfShapes[0]
+        rfW = node.parents[0].rfShapes[1]
+
+        node.rfShapes.push rfH
+        node.rfShapes.push rfW
         unless tops?[0]? then return
         # Loss layer always returns scalar
         tops[0].shape = [ 1 ]
@@ -74,8 +84,11 @@ class @DataLayer
         @defaultChannels  = 3
         @outputShape = @tryExtractShapes attribs
 
-    inferShapes: (bottoms, tops) =>
+    inferShapes: (bottoms, tops, node) =>
         unless tops?[0]? then return
+        # receptive field
+        node.rfShapes.push 1
+        node.rfShapes.push 1
         @checkParameters bottoms, tops
         tops[0].shape = @outputShape[..]
         tops[1].shape = @outputShape[..0] if tops[1]
@@ -128,9 +141,20 @@ class ConvolutionLayerBase
         @dilation = getValueOrDefault params.dilation, 1
         @axis     = getValueOrDefault params.axis, 1
 
-    inferShapes: (bottoms, tops) =>
+    inferShapes: (bottoms, tops, node) =>
         unless tops?[0]? then return
         @checkParameters bottoms, tops
+        inputShape = bottoms[0].shape
+        succeedingDimensions = inputShape[@axis + 1..]
+        sucDimLength = succeedingDimensions.length
+        kernel   = getParameterAsArray @kernel,   sucDimLength, 'kernel'
+        stride   = getParameterAsArray @stride,   sucDimLength, 'stride'
+        # receptive field
+        rfH = (node.parents[0].rfShapes[0] - 1) * stride[0] + kernel[0]
+        rfW = (node.parents[0].rfShapes[1] - 1) * stride[1] + kernel[1]
+
+        node.rfShapes.push rfH
+        node.rfShapes.push rfW
         # Convolution layer behaviour is alligned with Caffe
         # The layer processes each bottom -> top pair independently
         for i in [0...tops.length]
@@ -206,16 +230,25 @@ class @PoolingLayer
         # Caffe Pooling layer works only with two last axes, so pool will be
         # applied to dim - 2 and dim - 1 axes.
 
-    inferShapes: (bottoms, tops) =>
+    inferShapes: (bottoms, tops, node) =>
         unless tops?[0]? then return
         # Caffe pooling implementation works only with the single bottom -> top
         # pair. Blob tops[1] stores the output pooling mask if tops.length > 1.
         @checkParameters bottoms, tops
+
         inputShape = bottoms[0].shape
         outputShape = inputShape[..]
         padding = getParameterAsArray @padding, @spatialDimSize, 'padding'
         stride  = getParameterAsArray @stride,  @spatialDimSize, 'stride'
         kernel  = @getKernelSizes inputShape
+
+        # receptive field
+        rfH = (node.parents[0].rfShapes[0] - 1) * stride[0] + kernel[0]
+        rfW = (node.parents[0].rfShapes[1] - 1) * stride[1] + kernel[1]
+
+        node.rfShapes.push rfH
+        node.rfShapes.push rfW
+
         for i in [0...@spatialDimSize]
             ii = inputShape.length - @spatialDimSize + i
             outDim = (inputShape[ii] + 2 * padding[i] - kernel[i]) / stride[i]
@@ -255,7 +288,7 @@ class @InnerProductLayer
         @numOutput = params.num_output
         @axis = getValueOrDefault params.axis, 1
 
-    inferShapes: (bottoms, tops) =>
+    inferShapes: (bottoms, tops, node) =>
         unless tops?[0]? then return
         @checkParameters bottoms, tops
         inputShape = bottoms[0].shape
@@ -281,9 +314,20 @@ class @ConcatLayer
         axis  ?= params?.axis
         @axis  = getValueOrDefault axis, 1
 
-    inferShapes: (bottoms, tops) =>
+    inferShapes: (bottoms, tops, node) =>
         unless tops?[0]? then return
         @checkParameters bottoms, tops
+        # receptive field
+        rfH = 0
+        rfW = 0
+        for parent in node.parents
+            if rfW < parent.rfShapes[0]
+                rfH = parent.rfShapes[0]
+                rfW = parent.rfShapes[1]
+
+        node.rfShapes.push rfH
+        node.rfShapes.push rfW
+
         firstInputShape = bottoms[0].shape
         outputShape = firstInputShape[..]
         outputShape[@axis] = 0
@@ -313,7 +357,7 @@ class @ConcatLayer
 
 layers.Eltwise =
 class @EltwiseLayer
-    inferShapes: (bottoms, tops) =>
+    inferShapes: (bottoms, tops, node) =>
         unless tops?[0]? then return
         @checkParameters bottoms, tops
         firstInputShape = bottoms[0].shape
@@ -336,7 +380,12 @@ class @CropLayer
         params = attribs.crop_param
         @axis = getValueOrDefault params?.axis, 0
 
-    inferShapes: (bottoms, tops) =>
+    inferShapes: (bottoms, tops, node) =>
+        rfH = node.parents[0].rfShapes[0]
+        rfW = node.parents[0].rfShapes[1]
+
+        node.rfShapes.push rfH
+        node.rfShapes.push rfW
         unless tops?[0]? then return
         @checkParameters bottoms, tops
         outputShape = bottoms[0].shape[..]
@@ -394,7 +443,7 @@ exports.inferTopShapes = (node) ->
     try
         LayerType = getLayerType node.type
         layer = new LayerType node.attribs
-        layer.inferShapes node.bottoms, node.tops
+        layer.inferShapes node.bottoms, node.tops, node
         return (top.shape for top in node.tops)
     catch e
         throw "Can't infer output shape of the '#{node.name}' " +

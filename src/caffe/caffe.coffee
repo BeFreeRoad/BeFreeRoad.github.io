@@ -191,6 +191,8 @@ setNodeOutputShapesAttribute = (node) ->
     for blob in node.tops
         shapeText = '[ ' + blob.shape.join(', ') + ' ]'
         node.attribs.blob_shapes[blob.name] = shapeText
+    node.attribs.RFSshapes = { }
+    node.attribs.RFSshapes["RF"] = '[ ' + node.rfShapes.join(', ') + ' ]'
 
 computePrecedingShapes = (node) ->
     for parent in node.parents
